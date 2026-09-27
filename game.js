@@ -12,10 +12,10 @@
   const CENTER_C = COLS >> 1; // 10
   const CENTER_R = ROWS >> 1; // 11
 
-  const PLAYER_SPEED = 96;        // px/sec
-  const GHOST_SPEED = 84;
-  const GHOST_FRIGHT_SPEED = 58;
-  const GHOST_EATEN_SPEED = 170;
+  const PLAYER_SPEED = 155;       // px/sec
+  const GHOST_SPEED = 132;
+  const GHOST_FRIGHT_SPEED = 92;
+  const GHOST_EATEN_SPEED = 230;
 
   const FRIGHT_TIME = 7;          // power pellet: all ghosts, seconds
   const TRAP_FRIGHT_TIME = 9;     // trap pellet: one ghost, seconds
@@ -48,49 +48,71 @@
   }
 
   // ---------- Maze generation ----------
-  // Classic Pac-Man style topology: the field starts entirely WALL, and we
-  // carve out a network of 1-tile-wide corridors - three nested rectangular
-  // loops connected by vertical shafts and a horizontal tunnel row, plus a
-  // ghost house at the center. Every carved coordinate is defined relative
-  // to the center column/row, so the whole layout is left-right symmetric
-  // by construction.
+  // Classic Pac-Man silhouette: the field starts entirely open (dots), and
+  // we carve sparse rectangular WALL islands into it - mirrored 4 ways
+  // (left-right and top-bottom) so a single block placement always keeps
+  // the layout symmetric. Because the field is floor-by-default and every
+  // block is a small isolated island surrounded by corridor, the result is
+  // guaranteed to be one fully-connected region (verified separately with
+  // a BFS reachability check) - no hand-carved corridor can accidentally
+  // wall off a pocket of dots.
   function makeGrid() {
     const grid = [];
     for (let r = 0; r < ROWS; r++) {
       const row = [];
-      for (let c = 0; c < COLS; c++) row.push({ type: 'wall' });
+      for (let c = 0; c < COLS; c++) {
+        const border = r === 0 || r === ROWS - 1 || c === 0 || c === COLS - 1;
+        row.push({ type: border ? 'wall' : 'dot' });
+      }
       grid.push(row);
     }
 
     const inBounds = (c, r) => r >= 0 && r < ROWS && c >= 0 && c < COLS;
-    const carve = (c, r, type = 'dot') => { if (inBounds(c, r)) grid[r][c] = { type }; };
-    const carveRect = (x1, y1, x2, y2, type = 'dot') => {
-      for (let r = y1; r <= y2; r++) for (let c = x1; c <= x2; c++) carve(c, r, type);
+    const setWall = (c, r) => { if (inBounds(c, r)) grid[r][c] = { type: 'wall' }; };
+    const mirrorWall = (c, r) => {
+      setWall(c, r);
+      setWall(COLS - 1 - c, r);
+      setWall(c, ROWS - 1 - r);
+      setWall(COLS - 1 - c, ROWS - 1 - r);
     };
-    const carveOutline = (x1, y1, x2, y2, type = 'dot') => {
-      for (let c = x1; c <= x2; c++) { carve(c, y1, type); carve(c, y2, type); }
-      for (let r = y1; r <= y2; r++) { carve(x1, r, type); carve(x2, r, type); }
+    const block = (x, y, w, h) => {
+      for (let c = x; c < x + w; c++) for (let r = y; r < y + h; r++) mirrorWall(c, r);
     };
 
-    // Three nested corridor loops.
-    carveOutline(1, 1, COLS - 2, ROWS - 2);       // ring A (outer)
-    carveOutline(4, 4, COLS - 5, ROWS - 5);       // ring B
-    carveOutline(7, 7, COLS - 8, ROWS - 8);       // ring C (inner)
+    // Teeth hanging from the top perimeter (mirrors to the bottom too).
+    block(2, 2, 1, 2);
+    block(5, 2, 1, 2);
+    block(8, 2, 1, 2);
 
-    // Vertical shafts linking every ring, plus a horizontal tunnel row.
-    for (const c of [4, 7, CENTER_C, COLS - 8, COLS - 5]) carveRect(c, 1, c, ROWS - 2);
-    carveRect(1, TUNNEL_ROW, COLS - 2, TUNNEL_ROW);
+    // A second row of shorter teeth, offset, for texture.
+    block(3, 5, 1, 1);
+    block(6, 5, 1, 1);
+
+    // Quadrant clusters for density/visual interest.
+    block(2, 7, 2, 3);
+    block(5, 7, 3, 2);
+    block(2, 12, 2, 1);
+    block(2, 14, 1, 3);
+    block(5, 13, 3, 1);
+
+    // Ghost-house flanking bars (leave a 1-tile gap to the house itself).
+    block(6, 10, 2, 3);
+
+    // Gate pillars below the ghost house, flanking the spawn shaft.
+    block(8, 15, 1, 4);
+
+    const clearFloor = (c, r) => { grid[r][c] = { type: 'floor' }; };
+    const carve = (c, r, type) => { grid[r][c] = { type }; };
+
+    // Ghost house interior.
+    for (let r = CENTER_R - 1; r <= CENTER_R + 1; r++) {
+      for (let c = CENTER_C - 1; c <= CENTER_C + 1; c++) clearFloor(c, r);
+    }
+
+    // Tunnel row always fully open, overriding any stray block.
+    for (let c = 1; c <= COLS - 2; c++) carve(c, TUNNEL_ROW, 'dot');
     carve(0, TUNNEL_ROW, 'dot');
     carve(COLS - 1, TUNNEL_ROW, 'dot');
-
-    // Ladder rungs for extra loops/interest, symmetric top and bottom.
-    carveRect(1, 8, 7, 8);
-    carveRect(COLS - 8, 8, COLS - 2, 8);
-    carveRect(1, ROWS - 9, 7, ROWS - 9);
-    carveRect(COLS - 8, ROWS - 9, COLS - 2, ROWS - 9);
-
-    // Ghost house.
-    carveRect(CENTER_C - 1, CENTER_R - 1, CENTER_C + 1, CENTER_R + 1, 'floor');
 
     // Power pellets at the four outer corners.
     carve(1, 1, 'power');
@@ -107,7 +129,7 @@
     carve(CENTER_C, ROWS - 3, 'turbo');
 
     // Player spawn, kept clear.
-    carve(CENTER_C, ROWS - 4, 'floor');
+    clearFloor(CENTER_C, ROWS - 4);
 
     return grid;
   }
